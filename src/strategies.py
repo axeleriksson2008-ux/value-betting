@@ -8,11 +8,14 @@ Probability sources:
   pinnacle  Pinnacle odds at the same time as the bet, margin removed (power method)
   combo     Pinnacle says value AND the model agrees (model value >= 0);
             value is the Pinnacle-based one
+Book "best" = best price among named bookmakers (not the Max/Avg aggregates).
 
 Bet timing: main leagues use the "early" odds (a few days before the match),
 extra leagues only have closing odds. Betfair exchange (bfe) odds are reduced
 for 5 % commission on winnings. CLV = odds * Pinnacle fair closing prob - 1
 (for Asian handicap only when the closing line equals the bet line).
+Odds more than 25 % above the average odds for the same outcome are treated
+as data errors (e.g. a Max AH price of 22.0 where every book has 1.9).
 """
 
 import numpy as np
@@ -47,12 +50,33 @@ def _timing(m: pd.DataFrame) -> np.ndarray:
     return np.where(m["league"].isin(EXTRA_LEAGUES), "close", "early")
 
 
+OUTLIER_RATIO = 1.25  # odds > 25 % above the market average are treated as data errors
+
+
+NAMED_BOOKS = {
+    "1x2": ["b365", "bw", "iw", "wh", "vc", "bf", "bfe", "1xb", "bfd", "bmgm", "bv", "cl", "lb"],
+    "ou25": ["b365", "bfe"],
+    "ah": ["b365", "bfe"],
+}
+
+
+def _pick_best_named(m, timing, market, outcomes):
+    """Best odds among named bookmakers (not the Max/Avg aggregates), per outcome."""
+    stack = np.stack([_pick(m, timing, b, outcomes).to_numpy() for b in NAMED_BOOKS[market]])
+    filled = np.where(np.isnan(stack), -np.inf, stack)
+    best = filled.max(axis=0)
+    best = np.where(np.isinf(best), np.nan, best)
+    return pd.DataFrame(best, index=m.index, columns=outcomes)
+
+
 def _pick(m, timing, book, outcomes):
-    """Odds for this book at the bet timing, per row."""
+    """Odds for this book at the bet timing, per row (data errors removed)."""
     out = {}
     for o in outcomes:
         early, close = m[f"{book}_early_{o}"].to_numpy(), m[f"{book}_close_{o}"].to_numpy()
-        out[o] = np.where(timing == "early", early, close)
+        odds = np.where(timing == "early", early, close)
+        avg = np.where(timing == "early", m[f"avg_early_{o}"], m[f"avg_close_{o}"])
+        out[o] = np.where(odds > OUTLIER_RATIO * avg, np.nan, odds)  # NaN avg -> kept
     df = pd.DataFrame(out, index=m.index)
     c = EXCHANGE_COMMISSION.get(book)
     return 1 + (df - 1) * (1 - c) if c else df
@@ -77,8 +101,11 @@ def candidate_bets(m: pd.DataFrame, probs: pd.DataFrame, gd: np.ndarray) -> pd.D
         if market == "ah":
             line = np.where(timing == "early", m["ah_line_early"], m["ah_line_close"])
             same_line = np.where(timing == "early", m["ah_line_early"] == m["ah_line_close"], True)
-        for book in MARKET_BOOKS[market]:
-            odds = _pick(m, timing, book, outcomes)
+        for book in list(MARKET_BOOKS[market]) + ["best"]:
+            if book == "best":
+                odds = _pick_best_named(m, timing, market, outcomes)
+            else:
+                odds = _pick(m, timing, book, outcomes)
             if odds.isna().all().all():
                 continue
             # value per outcome for each source

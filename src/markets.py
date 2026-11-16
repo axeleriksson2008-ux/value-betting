@@ -29,7 +29,8 @@ def ah_profit(hg, ag, line, odds, side):
     if side == "aha":
         diff, line = -diff, -np.asarray(line, float)
     l1, l2 = _split(line)
-    return 0.5 * _single_line(diff + l1, odds) + 0.5 * _single_line(diff + l2, odds)
+    profit = 0.5 * _single_line(diff + l1, odds) + 0.5 * _single_line(diff + l2, odds)
+    return np.where(np.isnan(line) | np.isnan(odds), np.nan, profit)
 
 
 def ah_expected_profit(diff_dist, line, odds, side):
@@ -43,4 +44,6 @@ def ah_expected_profit(diff_dist, line, odds, side):
         k, line = -k, -line
     l1, l2 = _split(line)
     pay = 0.5 * _single_line(k + l1, odds) + 0.5 * _single_line(k + l2, odds)
-    return (diff_dist * pay).sum(axis=1)
+    ev = (diff_dist * pay).sum(axis=1)
+    missing = np.isnan(line[:, 0]) | np.isnan(odds[:, 0]) | np.isnan(diff_dist).any(axis=1)
+    return np.where(missing, np.nan, ev)

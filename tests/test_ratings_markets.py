@@ -136,3 +136,10 @@ def test_ah_level_line_equals_1x2():
     gd = goal_diff_dist(m)
     p_home = matrix_probs(m)["h"][0]
     assert ah_expected_profit(gd, -0.5, 2.0, "ahh")[0] == pytest.approx(p_home * 2 - 1)
+
+
+def test_ah_missing_line_or_odds_gives_nan():
+    gd = goal_diff_dist(score_matrices([1.4, 1.4], [1.2, 1.2]))
+    ev = ah_expected_profit(gd, [np.nan, -0.5], [1.9, np.nan], "ahh")
+    assert np.isnan(ev).all()
+    assert np.isnan(ah_profit(1, 0, np.nan, 1.9, "ahh"))
