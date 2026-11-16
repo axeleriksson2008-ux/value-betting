@@ -157,7 +157,12 @@ def write_report(res, calib):
               "| Statistik | Linje | Förutsagd andel över | Faktisk andel över | Matcher |", "|---|---|---|---|---|"]
     for (stat, line), g in calib.groupby(["stat", "line"], sort=False):
         lines.append(f"| {sm.STAT_NAME[stat]} | {line:.1f} | {g.p.mean():.1%} | {g.y.mean():.1%} | {len(g)} |")
-    (ROOT / "reports" / "stats_model_body.md").write_text("\n".join(lines) + "\n")
+    body = "\n".join(lines) + "\n"
+    (ROOT / "reports" / "stats_model_body.md").write_text(body)
+    intro_path = ROOT / "reports" / "stats_model_intro.md"
+    intro = intro_path.read_text() if intro_path.exists() else ""
+    head, rest = body.split("## Resultat på testperioden", 1)
+    (ROOT / "reports" / "stats_model.md").write_text(head + intro + "## Resultat på testperioden" + rest)
 
 
 if __name__ == "__main__":
