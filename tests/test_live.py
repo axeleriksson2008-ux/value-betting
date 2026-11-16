@@ -82,3 +82,22 @@ def test_value_report_lists_upcoming(db, monkeypatch):
     assert "Arsenal – Chelsea" in txt and "unibet_se" in txt
     # latest snapshot: Unibet 2.00 vs fair 1.94 -> value 3 %, quarter Kelly 0.75 % of 1000 = 7 kr
     assert "7 kr" in txt
+
+
+def test_signals_book_filter(db):
+    prices = oddsdb.price_table(db)
+    only_ss = live.signals(prices, threshold=-1, books=["svenskaspel_se"])
+    assert set(only_ss["book"]) == {"svenskaspel_se"}
+    assert set(live.signals(prices, threshold=-1)["book"]) <= {"unibet_se", "svenskaspel_se"}
+
+
+def test_latest_fair_and_manual_value(db, monkeypatch):
+    now = pd.Timestamp("2026-11-20T15:00:00Z")
+    f = live.latest_fair(oddsdb.price_table(db), now=now)
+    assert len(f) == 1
+    # latest snapshot before kick-off is the closing one
+    assert f.iloc[0]["fair_h"] == pytest.approx(remove_margin([1.90, 3.70, 4.20])[0])
+    mv = live.manual_value(0.5, 2.2, 1000)
+    assert mv["value"] == pytest.approx(0.1)
+    assert mv["fair_odds"] == pytest.approx(2.0)
+    assert mv["stake"] == 20  # quarter Kelly 2.1 % -> capped at 2 %

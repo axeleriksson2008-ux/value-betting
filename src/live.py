@@ -55,12 +55,14 @@ def fair_probs(w: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(rows).drop_duplicates(subset=keys, keep="first")  # Pinnacle first
 
 
-def signals(prices: pd.DataFrame, threshold: float = config.VALUE_THRESHOLD) -> pd.DataFrame:
-    """Every (snapshot, event, outcome) where the best Swedish price has value >= threshold."""
+def signals(prices: pd.DataFrame, threshold: float = config.VALUE_THRESHOLD,
+            books: list[str] | None = None) -> pd.DataFrame:
+    """Every (snapshot, event, outcome) where the best price among `books`
+    (default: all Swedish books) has value >= threshold."""
     w = wide_prices(prices)
     w = w[w["fetched_at"] < w["commence_time"]]
     fair = fair_probs(w)
-    se = w[w["book"].isin(config.SWEDISH_BOOKS)]
+    se = w[w["book"].isin(books or config.SWEDISH_BOOKS)]
     out = []
     for o in OUTCOMES:
         best = se.dropna(subset=[o]).sort_values(o).groupby(["snapshot_id", "event_id"]).tail(1)
@@ -76,6 +78,26 @@ def signals(prices: pd.DataFrame, threshold: float = config.VALUE_THRESHOLD) -> 
             "outcome", "book", "odds", "fair_odds", "p_fair", "fair_source", "value", "stake_share"]
     return s.loc[s["value"] >= threshold, cols].sort_values(["commence_time", "value"],
                                                              ascending=[True, False])
+
+
+def latest_fair(prices: pd.DataFrame, now=None) -> pd.DataFrame:
+    """Most recent fair h/d/a probabilities for every upcoming event (for manual odds checks)."""
+    now = now or pd.Timestamp(utcnow())
+    w = wide_prices(prices)
+    w = w[(w["fetched_at"] < w["commence_time"]) & (w["commence_time"] > now)]
+    fair = fair_probs(w)
+    if fair.empty:
+        return pd.DataFrame()
+    ev = w.drop_duplicates(["snapshot_id", "event_id"])[
+        ["snapshot_id", "event_id", "sport", "fetched_at", "commence_time", "home", "away"]]
+    f = fair.merge(ev, on=["snapshot_id", "event_id"])
+    return f.sort_values("fetched_at").groupby("event_id").tail(1).sort_values("commence_time")
+
+
+def manual_value(p_fair: float, odds: float, bankroll: float) -> dict:
+    """Value and suggested stake for odds you see yourself (e.g. at bet365)."""
+    share = kelly_fraction(p_fair, odds, config.KELLY_FRACTION, config.MAX_STAKE_SHARE)
+    return {"value": p_fair * odds - 1, "fair_odds": 1 / p_fair, "stake": round(share * bankroll)}
 
 
 def closing_fair(prices: pd.DataFrame) -> pd.DataFrame:

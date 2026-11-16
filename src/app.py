@@ -21,6 +21,11 @@ from src import betlog, config, live, oddsdb  # noqa: E402
 from src.demo import DEMO_DIR, generate  # noqa: E402
 
 OUT_NAME = {"h": "1", "d": "X", "a": "2"}
+BOOK_NAME = {"svenskaspel_se": "Svenska Spel", "unibet_se": "Unibet", "betsson": "Betsson",
+             "nordicbet": "NordicBet", "atg_se": "ATG", "leovegas_se": "LeoVegas",
+             "expekt_se": "Nya Expekt", "betmgm_se": "BetMGM", "bet365": "bet365",
+             "pinnacle": "Pinnacle", "betfair_ex_eu": "Betfair-börsen"}
+MANUAL_BOOKS = ["bet365"]  # books the API does not cover; odds are typed in by hand
 LEAGUE_NAME = {
     "soccer_epl": "Premier League", "soccer_efl_champ": "Championship",
     "soccer_spain_la_liga": "La Liga", "soccer_italy_serie_a": "Serie A",
@@ -86,6 +91,11 @@ if source == "Demo" and not P["snapshots"].exists():
         generate()
 bankroll = st.sidebar.number_input("Startkassa (kr)", min_value=100, value=1000, step=100)
 threshold = st.sidebar.slider("Minsta value", 0.0, 0.10, config.VALUE_THRESHOLD, 0.01, format="%.2f")
+my_books = st.sidebar.multiselect(
+    "Mina bolag", config.SWEDISH_BOOKS, default=["unibet_se"],
+    format_func=lambda b: BOOK_NAME.get(b, b),
+    help="Value-listan visar bara spel hos dessa bolag. Tomt = alla. "
+         "bet365 finns inte i odds-API:t – använd 'Kolla odds själv' nedan.")
 st.sidebar.caption(f"Insats = kvarts-Kelly, högst {config.MAX_STAKE_SHARE:.0%} av kassan.")
 st.sidebar.markdown("---")
 st.sidebar.caption("Verktyget är för analys. Spela bara för pengar du har råd att förlora. "
@@ -108,7 +118,7 @@ with tab_value:
         st.info("Inga odds hämtade än. När insamlingen (GitHub Actions) har kört dyker spelen upp här.")
     else:
         now = pd.Timestamp.now(tz="UTC")
-        s = live.signals(prices, threshold)
+        s = live.signals(prices, threshold, books=my_books or None)
         latest = s.groupby("event_id")["snapshot_id"].transform("max") == s["snapshot_id"]
         s = s[latest & (s["commence_time"] > now)].copy()
         s["stake_kr"] = (s["stake_share"] * bankroll).round(0)
@@ -120,35 +130,75 @@ with tab_value:
                 "Liga": s["sport"].map(LEAGUE_NAME).fillna(s["sport"]),
                 "Match": s["home"] + " – " + s["away"],
                 "Spel": s["outcome"].map(OUT_NAME),
-                "Bolag": s["book"],
+                "Bolag": s["book"].map(lambda b: BOOK_NAME.get(b, b)),
                 "Odds": s["odds"],
                 "Rättvist odds": s["fair_odds"].round(2),
                 "Value": s["value"],
                 "Insats (kr)": s["stake_kr"],
                 "Hämtat": s["fetched_at"].dt.tz_convert("Europe/Stockholm").dt.strftime("%d/%m %H:%M"),
             })
-            st.dataframe(view, hide_index=True, use_container_width=True,
+            st.dataframe(view, hide_index=True, width="stretch",
                          column_config={"Value": st.column_config.NumberColumn(format="percent"),
                                         "Odds": st.column_config.NumberColumn(format="%.2f"),
                                         "Rättvist odds": st.column_config.NumberColumn(format="%.2f"),
                                         "Insats (kr)": st.column_config.NumberColumn(format="%.0f")})
 
             st.markdown("#### Registrera ett spel du har lagt")
-            labels = [f"{r.home} – {r.away} · {OUT_NAME[r.outcome]} · {r.book} @ {r.odds:.2f}"
+            labels = [f"{r.home} – {r.away} · {OUT_NAME[r.outcome]} · {BOOK_NAME.get(r.book, r.book)} @ {r.odds:.2f}"
                       for r in s.itertuples()]
-            with st.form("add_bet"):
-                i = st.selectbox("Spel", range(len(s)), format_func=lambda k: labels[k])
-                r = s.iloc[i]
-                c1, c2 = st.columns(2)
-                odds = c1.number_input("Odds du fick", min_value=1.01, value=float(r["odds"]), step=0.01)
-                stake = c2.number_input("Insats (kr)", min_value=1.0, value=float(max(r["stake_kr"], 1)), step=1.0)
-                if st.form_submit_button("Spara i spelloggen"):
-                    bets = betlog.add_bet(bets, event_id=r["event_id"], sport=r["sport"],
-                                          match=f"{r['home']} – {r['away']}", commence_time=r["commence_time"],
-                                          outcome=r["outcome"], book=r["book"], odds=odds, stake=stake,
-                                          fair_odds=r["fair_odds"])
-                    betlog.save_bets(bets, P["bets"])
-                    st.success("Sparat!")
+            i = st.selectbox("Spel", range(len(s)), format_func=lambda k: labels[k], key="pick_signal")
+            r = s.iloc[i]
+            c1, c2, c3 = st.columns(3)
+            books = [r["book"]] + [b for b in config.SWEDISH_BOOKS + MANUAL_BOOKS if b != r["book"]]
+            book = c1.selectbox("Bolag", books, format_func=lambda b: BOOK_NAME.get(b, b), key=f"book_{i}")
+            odds = c2.number_input("Odds du fick", min_value=1.01, value=float(r["odds"]), step=0.01, key=f"odds_{i}")
+            stake = c3.number_input("Insats (kr)", min_value=1.0, value=float(max(r["stake_kr"], 1)), step=1.0,
+                                    key=f"stake_{i}")
+            if st.button("Spara i spelloggen", key="save_signal"):
+                bets = betlog.add_bet(bets, event_id=r["event_id"], sport=r["sport"],
+                                      match=f"{r['home']} – {r['away']}", commence_time=r["commence_time"],
+                                      outcome=r["outcome"], book=book, odds=odds, stake=stake,
+                                      fair_odds=r["fair_odds"])
+                betlog.save_bets(bets, P["bets"])
+                st.success("Sparat!")
+
+        st.markdown("---")
+        st.subheader("Kolla odds själv (t.ex. bet365)")
+        st.caption("Välj match och utfall, skriv in oddset du ser hos bolaget. Appen jämför med Pinnacles "
+                   "rättvisa pris från senaste hämtningen.")
+        fair = live.latest_fair(prices)
+        if fair.empty:
+            st.info("Inga kommande matcher med Pinnacle-odds just nu.")
+        else:
+            ev_labels = [f"{r.home} – {r.away} ({r.commence_time.tz_convert('Europe/Stockholm'):%a %d/%m %H:%M})"
+                         for r in fair.itertuples()]
+            c1, c2 = st.columns([3, 1])
+            j = c1.selectbox("Match", range(len(fair)), format_func=lambda k: ev_labels[k], key="manual_event")
+            e = fair.iloc[j]
+            out = c2.radio("Spel", ["h", "d", "a"], format_func=lambda o: OUT_NAME[o], horizontal=True,
+                           key="manual_outcome")
+            c1, c2, c3 = st.columns(3)
+            mbook = c1.selectbox("Bolag", MANUAL_BOOKS + config.SWEDISH_BOOKS,
+                                 format_func=lambda b: BOOK_NAME.get(b, b), key="manual_book")
+            modds = c2.number_input("Odds hos bolaget", min_value=1.01, value=2.00, step=0.01, key="manual_odds")
+            mv = live.manual_value(float(e[f"fair_{out}"]), modds, bankroll)
+            k = st.columns(3)
+            k[0].metric("Rättvist odds", f"{mv['fair_odds']:.2f}",
+                        help=f"Källa: {BOOK_NAME.get(e['fair_source'], e['fair_source'])}, "
+                             f"hämtat {e['fetched_at'].tz_convert('Europe/Stockholm'):%d/%m %H:%M}")
+            k[1].metric("Value", f"{mv['value']:+.1%}")
+            k[2].metric("Föreslagen insats", f"{mv['stake']} kr")
+            if mv["value"] < 0:
+                st.caption("Negativt value: oddset är sämre än det rättvisa priset. Spela inte.")
+            mstake = c3.number_input("Insats (kr)", min_value=1.0, value=float(max(mv["stake"], 1)), step=1.0,
+                                     key="manual_stake")
+            if st.button("Spara i spelloggen", key="save_manual"):
+                bets = betlog.add_bet(bets, event_id=e["event_id"], sport=e["sport"],
+                                      match=f"{e['home']} – {e['away']}", commence_time=e["commence_time"],
+                                      outcome=out, book=mbook, odds=modds, stake=mstake,
+                                      fair_odds=mv["fair_odds"], note="manuellt odds")
+                betlog.save_bets(bets, P["bets"])
+                st.success("Sparat!")
 
 # ---------------------------------------------------------------- bet log
 
@@ -180,7 +230,7 @@ with tab_log:
             spel=ev["outcome"].map(OUT_NAME))[
             ["bet_id", "avspark", "match", "spel", "book", "odds", "stake", "status", "profit", "clv", "note"]]
         edited = st.data_editor(
-            show, hide_index=True, use_container_width=True,
+            show, hide_index=True, width="stretch",
             disabled=[c for c in show.columns if c not in ("status", "note")],
             column_config={
                 "bet_id": st.column_config.NumberColumn("#"),
@@ -224,7 +274,7 @@ with tab_stats:
             tooltip=[alt.Tooltip("date:T", title="Datum", format="%d %b %H:%M"),
                      alt.Tooltip("bankroll:Q", title="Kassa", format=".0f")])
         rule = alt.Chart(pd.DataFrame({"y": [bankroll]})).mark_rule(strokeDash=[4, 4], opacity=0.5).encode(y="y:Q")
-        st.altair_chart(chart + rule, use_container_width=True)
+        st.altair_chart(chart + rule, width="stretch")
     if s["settled"] and s["settled"] < 300:
         st.caption(f"Med {s['settled']} spel är ROI mest slump. CLV säger mer tills du har några hundra spel.")
 
@@ -244,7 +294,7 @@ with tab_stats:
             k[2].metric("95 % intervall", f"{c['clv'].mean() - 1.96 * se:+.1%} … {c['clv'].mean() + 1.96 * se:+.1%}")
             g = c.groupby("book").agg(Signaler=("clv", "size"), Snitt_CLV=("clv", "mean"),
                                       Snitt_value=("value", "mean")).reset_index().rename(columns={"book": "Bolag"})
-            st.dataframe(g, hide_index=True, use_container_width=True,
+            st.dataframe(g, hide_index=True, width="stretch",
                          column_config={"Snitt_CLV": st.column_config.NumberColumn("Snitt-CLV", format="percent"),
                                         "Snitt_value": st.column_config.NumberColumn("Snitt-value", format="percent")})
     if Path(P["api_log"]).exists():
