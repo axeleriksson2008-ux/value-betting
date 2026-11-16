@@ -55,6 +55,28 @@ def bets_table(preds, source, market, books):
     return head + "\n" + "\n".join(rows)
 
 
+def league_breakdown(preds, source, book, market, th):
+    b = select_bets(preds, source, book, market, th)
+    lines = ["| Liga | Spel | Snittodds | ROI | 95 % KI för ROI | Snitt-CLV |", "|---|---|---|---|---|---|"]
+    for league, g in b.groupby("league"):
+        s = summarize(g)
+        lines.append(f"| {league} | {s['bets']} | {s['avg_odds']:.2f} | {pct(s['roi'])} "
+                     f"| {pct(s['roi_ci_low'])} … {pct(s['roi_ci_high'])} | {pct(s['avg_clv'])} |")
+    return "\n".join(lines)
+
+
+def margin_comparison(preds):
+    lines = ["| Strategi | Metod | Spel | Snittodds | ROI | 95 % KI för ROI | Snitt-CLV |",
+             "|---|---|---|---|---|---|---|"]
+    for book, th in [("b365", 0.0), ("b365", 0.03), ("max", 0.03), ("max", 0.05)]:
+        for method in ["proportional", "power"]:
+            s = summarize(select_bets(preds, "pinnacle", book, "1x2", th, margin_method=method))
+            lines.append(f"| Pinnacle → {book}, ≥ {th:.0%} | {method} | {s['bets']} | {s['avg_odds']:.2f} "
+                         f"| {pct(s['roi'])} | {pct(s['roi_ci_low'])} … {pct(s['roi_ci_high'])} "
+                         f"| {pct(s['avg_clv'])} |")
+    return "\n".join(lines)
+
+
 def accuracy_md(preds, market):
     t = accuracy_table(preds, market)
     lines = ["| Liga | Matcher | Log loss modell | Log loss Pinnacle | Brier modell | Brier Pinnacle |",
@@ -94,7 +116,7 @@ def calibration_figure(preds, path):
     plt.close(fig)
 
 
-def cumulative_figure(preds, strategies, path, title):
+def cumulative_figure(preds, strategies, path, title, legend_loc="lower left"):
     fig, ax = plt.subplots(figsize=(8, 4.5), dpi=150)
     _style(ax)
     ax.axhline(0, color=INK_MUTED, linewidth=0.8)
@@ -108,7 +130,7 @@ def cumulative_figure(preds, strategies, path, title):
                     textcoords="offset points", fontsize=8, color=INK, va="center")
     ax.set_ylabel("Ackumulerad vinst (enheter, 1 enhet per spel)", color=INK, fontsize=9)
     ax.set_title(title, color=INK, fontsize=11, loc="left")
-    ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc="lower left")
+    ax.legend(frameon=False, fontsize=8, labelcolor=INK, loc=legend_loc)
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
@@ -125,9 +147,10 @@ def main():
     }, REPORTS / "cumulative_model.png", "Egen modell, 1X2")
     cumulative_figure(preds, {
         "Pinnacle → B365, value ≥ 0 %": ("pinnacle", "b365", "1x2", 0.0),
-        "Pinnacle → B365, value ≥ 3 %": ("pinnacle", "b365", "1x2", 0.03),
+        "Pinnacle → Max, value ≥ 0 %": ("pinnacle", "max", "1x2", 0.0),
         "Pinnacle → Max, value ≥ 3 %": ("pinnacle", "max", "1x2", 0.03),
-    }, REPORTS / "cumulative_pinnacle.png", "Utan modell: Pinnacles rättvisa odds mot andra bolag, 1X2")
+    }, REPORTS / "cumulative_pinnacle.png", "Utan modell: Pinnacles rättvisa odds mot andra bolag, 1X2",
+        legend_loc="upper left")
 
     sections = {
         "ACC_1X2": accuracy_md(preds, "1x2"),
@@ -136,6 +159,9 @@ def main():
         "MODEL_OU": bets_table(preds, "model", "ou25", ["b365", "avg", "max"]),
         "PIN_1X2": bets_table(preds, "pinnacle", "1x2", ["b365", "max"]),
         "PIN_OU": bets_table(preds, "pinnacle", "ou25", ["b365", "max"]),
+        "PIN_LEAGUE_MAX": league_breakdown(preds, "pinnacle", "max", "1x2", 0.03),
+        "PIN_LEAGUE_B365": league_breakdown(preds, "pinnacle", "b365", "1x2", 0.0),
+        "MARGIN_CMP": margin_comparison(preds),
     }
     template = (REPORTS / "backtest_template.md").read_text()
     for key, text in sections.items():
