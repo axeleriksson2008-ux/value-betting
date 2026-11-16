@@ -61,6 +61,27 @@ ODDS_COLUMNS = odds_columns()
 AH_LINE_COLUMNS = ["ah_line_early", "ah_line_close"]
 BASE_COLUMNS = ["date", "league", "season", "home", "away", "hg", "ag"]
 
+# Match statistics (main leagues only): normalised name -> (home column, away column)
+STAT_SOURCES = {
+    "shots": ("HS", "AS"),
+    "sot": ("HST", "AST"),        # shots on target
+    "fouls": ("HF", "AF"),        # fouls committed
+    "corners": ("HC", "AC"),
+    "yellow": ("HY", "AY"),
+    "red": ("HR", "AR"),
+}
+STAT_COLUMNS = [f"{s}_{side}" for s in STAT_SOURCES for side in ("h", "a")] + ["referee"]
+
+
+def _add_stats(raw: pd.DataFrame, out: pd.DataFrame) -> pd.DataFrame:
+    """Add shots/fouls/corners/cards per team (NaN where the file has none) and referee."""
+    new = {}
+    for name, (hc, ac) in STAT_SOURCES.items():
+        for side, col in (("h", hc), ("a", ac)):
+            new[f"{name}_{side}"] = pd.to_numeric(raw[col], errors="coerce") if col in raw.columns else float("nan")
+    new["referee"] = raw["Referee"].astype(str).str.strip() if "Referee" in raw.columns else None
+    return pd.concat([out, pd.DataFrame(new, index=out.index)], axis=1)
+
 
 def _add_odds(raw: pd.DataFrame, out: pd.DataFrame) -> pd.DataFrame:
     new = {}
@@ -103,7 +124,7 @@ def read_main_league(path: Path, league: str, season: int) -> pd.DataFrame:
         "hg": raw["FTHG"].astype(int),
         "ag": raw["FTAG"].astype(int),
     })
-    return _add_odds(raw, out)
+    return _add_odds(raw, _add_stats(raw, out))
 
 
 def read_extra_league(path: Path, league: str) -> pd.DataFrame:
@@ -121,7 +142,7 @@ def read_extra_league(path: Path, league: str) -> pd.DataFrame:
         "hg": raw["HG"].astype(int),
         "ag": raw["AG"].astype(int),
     })
-    return _add_odds(raw, out)
+    return _add_odds(raw, _add_stats(raw, out))
 
 
 _MAIN_FILE = re.compile(r"^(?P<league>[A-Z]+\d?)_(?P<season>\d{4})\.csv$")
@@ -138,7 +159,7 @@ def load_all(raw_dir: Path) -> pd.DataFrame:
         else:
             frames.append(read_extra_league(path, path.stem))
     df = pd.concat(frames, ignore_index=True)
-    df = df[BASE_COLUMNS + AH_LINE_COLUMNS + ODDS_COLUMNS]
+    df = df[BASE_COLUMNS + STAT_COLUMNS + AH_LINE_COLUMNS + ODDS_COLUMNS]
     df = df.drop_duplicates(subset=["date", "league", "home", "away"])
     return df.sort_values(["date", "league", "home"], kind="stable").reset_index(drop=True)
 
