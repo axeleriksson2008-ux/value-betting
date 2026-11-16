@@ -92,6 +92,8 @@ if source == "Demo" and not P["snapshots"].exists():
         generate()
 bankroll = st.sidebar.number_input("Startkassa (kr)", min_value=100, value=1000, step=100)
 threshold = st.sidebar.slider("Minsta value", 0.0, 0.10, config.VALUE_THRESHOLD, 0.01, format="%.2f")
+odds_range = st.sidebar.slider("Oddsintervall", 1.01, 10.0, (1.30, 3.00), 0.05,
+                               help="Visa bara spel med odds i detta intervall.")
 my_books = st.sidebar.multiselect(
     "Mina bolag", config.SWEDISH_BOOKS, default=["unibet_se"],
     format_func=lambda b: BOOK_NAME.get(b, b),
@@ -122,7 +124,7 @@ with tab_value:
         now = pd.Timestamp.now(tz="UTC")
         s = live.signals(prices, threshold, books=my_books or None)
         latest = s.groupby("event_id")["snapshot_id"].transform("max") == s["snapshot_id"]
-        s = s[latest & (s["commence_time"] > now)].copy()
+        s = s[latest & (s["commence_time"] > now) & s["odds"].between(*odds_range)].copy()
         s["stake_kr"] = (s["stake_share"] * bankroll).round(0)
         if s.empty:
             st.info("Inga spel över tröskeln just nu.")
