@@ -107,14 +107,34 @@ def fair_odds(p: float) -> float:
     return 1.0 / p
 
 
-def remove_margin(odds) -> np.ndarray:
-    """Bookmaker odds -> fair probabilities (proportional method).
+def remove_margin(odds, method: str = "power") -> np.ndarray:
+    """Bookmaker odds -> fair probabilities. Works on one row or a 2D array of rows.
 
-    Implied probabilities 1/odds sum to more than 1 (the margin);
-    divide each by the sum so they sum to exactly 1.
+    Implied probabilities q = 1/odds sum to more than 1 (the margin).
+    - "proportional": p = q / sum(q). Simple, but bookmakers put more margin
+      on long shots, so this gives long shots too high a probability.
+    - "power" (default): p = q^k, with k > 1 chosen so the p sum to 1.
+      Takes relatively more margin off long shots; it fits Pinnacle's
+      results better (lower log loss in our data).
+    Rows containing NaN give NaN.
     """
-    implied = 1.0 / np.asarray(odds, dtype=float)
-    return implied / implied.sum(axis=-1, keepdims=True)
+    q = 1.0 / np.asarray(odds, dtype=float)
+    if method == "proportional":
+        return q / q.sum(axis=-1, keepdims=True)
+    if method != "power":
+        raise ValueError(f"unknown method {method}")
+    q2 = np.atleast_2d(q)
+    lo = np.full(q2.shape[0], 0.5)
+    hi = np.full(q2.shape[0], 5.0)
+    for _ in range(60):  # bisection on k, all rows at once
+        mid = (lo + hi) / 2
+        too_big = (q2 ** mid[:, None]).sum(axis=1) > 1  # sum decreases as k grows
+        lo = np.where(too_big, mid, lo)
+        hi = np.where(too_big, hi, mid)
+    k = (lo + hi) / 2
+    p = q2 ** k[:, None]
+    p[np.isnan(q2).any(axis=1)] = np.nan
+    return p.reshape(q.shape)
 
 
 def value(p: float, odds: float) -> float:

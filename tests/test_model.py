@@ -40,17 +40,32 @@ def test_fair_odds_and_value():
     assert value(0.5, 2.0) == pytest.approx(0.0)
 
 
-def test_remove_margin():
-    probs = remove_margin([1.9, 1.9])
+def test_remove_margin_proportional():
+    probs = remove_margin([1.9, 1.9], method="proportional")
     assert probs == pytest.approx([0.5, 0.5])
-    probs = remove_margin([2.0, 3.5, 4.0])
+    probs = remove_margin([2.0, 3.5, 4.0], method="proportional")
     assert probs.sum() == pytest.approx(1.0)
     assert probs[0] == pytest.approx((1 / 2.0) / (1 / 2.0 + 1 / 3.5 + 1 / 4.0))
 
 
-def test_remove_margin_rowwise():
-    probs = remove_margin(np.array([[1.9, 1.9], [1.5, 2.5]]))
-    assert probs.sum(axis=1) == pytest.approx([1.0, 1.0])
+def test_remove_margin_power():
+    odds = [1.5, 4.2, 7.0]
+    probs = remove_margin(odds)
+    assert probs.sum() == pytest.approx(1.0)
+    # p = q^k for one common k
+    q = 1 / np.array(odds)
+    k = np.log(probs[0]) / np.log(q[0])
+    assert probs == pytest.approx(q ** k)
+    # power method gives the long shot less than proportional does
+    assert probs[2] < remove_margin(odds, method="proportional")[2]
+    # no margin -> unchanged
+    assert remove_margin([2.0, 2.0]) == pytest.approx([0.5, 0.5])
+
+
+def test_remove_margin_rowwise_and_nan():
+    probs = remove_margin(np.array([[1.9, 1.9], [1.5, 2.5], [np.nan, 2.0]]))
+    assert probs[:2].sum(axis=1) == pytest.approx([1.0, 1.0])
+    assert np.isnan(probs[2]).all()
 
 
 def test_kelly():
