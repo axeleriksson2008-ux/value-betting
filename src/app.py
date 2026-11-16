@@ -18,6 +18,7 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from src import betlog, config, live, oddsdb  # noqa: E402
+from src import stats_model as sm  # noqa: E402
 from src.demo import DEMO_DIR, generate  # noqa: E402
 
 OUT_NAME = {"h": "1", "d": "X", "a": "2"}
@@ -108,7 +109,8 @@ prices = load_prices(str(P["snapshots"]), str(P["db"]), str(P["api_log"]), _fing
 bets = betlog.load_bets(P["bets"])
 closing = live.closing_fair(prices) if len(prices) else None
 
-tab_value, tab_log, tab_stats = st.tabs(["📋 Value-spel", "📝 Spellogg", "📈 Statistik"])
+tab_value, tab_props, tab_log, tab_stats = st.tabs(
+    ["📋 Value-spel", "🎯 Statistikspel", "📝 Spellogg", "📈 Statistik"])
 
 # ---------------------------------------------------------------- value bets
 
@@ -200,6 +202,80 @@ with tab_value:
                 betlog.save_bets(bets, P["bets"])
                 st.success("Sparat!")
 
+# ---------------------------------------------------------------- statistics bets
+
+FD_LEAGUE = {"E0": "Premier League", "E1": "Championship", "E2": "League One", "E3": "League Two",
+             "SC0": "Skottland Premiership", "SC1": "Skottland Championship", "SC2": "Skottland League One",
+             "SC3": "Skottland League Two", "D1": "Bundesliga", "D2": "2. Bundesliga", "I1": "Serie A",
+             "I2": "Serie B", "SP1": "La Liga", "SP2": "La Liga 2", "F1": "Ligue 1", "F2": "Ligue 2",
+             "N1": "Eredivisie", "B1": "Belgien Pro League", "P1": "Portugal Primeira Liga",
+             "T1": "Turkiet Süper Lig", "G1": "Grekland Super League"}
+SCOPE_NAME = {"total": "Matchen totalt", "home": "Hemmalaget", "away": "Bortalaget"}
+
+
+@st.cache_data
+def stat_ratings():
+    return sm.load_ratings()
+
+
+with tab_props:
+    st.subheader("Statistikspel: skott, skott på mål, fouls, hörnor, kort")
+    R = stat_ratings()
+    if not R:
+        st.info("Inga statistikmodeller än. Kör `python -m src.stats_eval`.")
+    else:
+        st.caption(f"Lagens form beräknad till och med {R['as_of']}. Modellens kvalitet: se "
+                   "`reports/stats_model.md`. Kort = gula + röda; kontrollera hur ditt bolag räknar.")
+        leagues = sorted(R["leagues"], key=lambda c: FD_LEAGUE.get(c, c))
+        c1, c2, c3 = st.columns(3)
+        lg = c1.selectbox("Liga", leagues, format_func=lambda c: FD_LEAGUE.get(c, c), key="p_league",
+                          index=leagues.index("E0") if "E0" in leagues else 0)
+        teams = R["leagues"][lg]["teams"]
+        home = c2.selectbox("Hemmalag", teams, key="p_home")
+        away = c3.selectbox("Bortalag", [t for t in teams if t != home], key="p_away")
+        stats_here = [k for k in sm.STATS if k in R["leagues"][lg]]
+        c1, c2, c3, c4 = st.columns(4)
+        stat = c1.selectbox("Statistik", stats_here, format_func=lambda k: sm.STAT_NAME[k], key="p_stat")
+        scope = c2.selectbox("Gäller", list(SCOPE_NAME), format_func=SCOPE_NAME.get, key="p_scope")
+        lam_h, lam_a = sm.match_means(R, lg, stat, home, away)
+        mean = {"total": lam_h + lam_a, "home": lam_h, "away": lam_a}[scope]
+        line = c3.number_input("Linje", min_value=0.5, value=float(np.floor(mean)) + 0.5, step=0.5,
+                               key=f"p_line_{lg}_{stat}_{scope}")
+        side = c4.radio("Spel", ["over", "under"], format_func={"over": "Över", "under": "Under"}.get,
+                        horizontal=True, key="p_side")
+        res = sm.market_prob(R, lg, stat, home, away, scope, line)
+        p_win, p_push = res[side], res["push"]
+        fair = sm.fair_odds_with_push(p_win, p_push)
+
+        k = st.columns(4)
+        k[0].metric("Väntat antal", f"{res['mean']:.1f}",
+                    help=f"{home}: {lam_h:.1f}, {away}: {lam_a:.1f}")
+        k[1].metric(f"Sannolikhet {'över' if side == 'over' else 'under'} {line:g}", f"{p_win:.1%}",
+                    help="Push (exakt linjen) ger pengarna tillbaka" if p_push else None)
+        k[2].metric("Rättvist odds", f"{fair:.2f}")
+
+        c1, c2, c3 = st.columns(3)
+        pbook = c1.selectbox("Bolag", MANUAL_BOOKS + config.SWEDISH_BOOKS,
+                             format_func=lambda b: BOOK_NAME.get(b, b), key="p_book")
+        podds = c2.number_input("Odds hos bolaget", min_value=1.01, value=max(1.01, round(fair, 2)),
+                                step=0.01, key=f"p_odds_{lg}_{stat}_{scope}_{line}_{side}")
+        p_eff = p_win / (1 - p_push) if p_push < 1 else 0  # pushes are refunded
+        value = p_eff * podds - 1
+        share = live.kelly_fraction(p_eff, podds, config.KELLY_FRACTION, config.MAX_STAKE_SHARE)
+        k[3].metric("Value", f"{value:+.1%}")
+        st.caption(f"Föreslagen insats: **{round(share * bankroll)} kr** (kvarts-Kelly). "
+                   "Obs: statistikmodellen är inte jämförd mot bolagens odds historiskt – "
+                   "börja med små insatser och följ upp i spelloggen.")
+        kick = c3.date_input("Matchdag", key="p_date")
+        if st.button("Spara i spelloggen", key="save_prop"):
+            desc = f"{sm.STAT_NAME[stat]} {SCOPE_NAME[scope].lower()} {'över' if side == 'over' else 'under'} {line:g}"
+            bets = betlog.add_bet(bets, event_id=f"stat:{lg}:{home}:{away}:{kick}", sport=lg,
+                                  match=f"{home} – {away}", commence_time=pd.Timestamp(kick, tz="UTC"),
+                                  outcome=desc, book=pbook, odds=podds, stake=max(1, round(share * bankroll)),
+                                  fair_odds=fair, note="statistikspel")
+            betlog.save_bets(bets, P["bets"])
+            st.success("Sparat!")
+
 # ---------------------------------------------------------------- bet log
 
 with tab_log:
@@ -227,7 +303,7 @@ with tab_log:
         ev = betlog.evaluate(bets, closing)
         show = ev.assign(
             avspark=ev["commence_time"].dt.tz_convert("Europe/Stockholm").dt.strftime("%d/%m %H:%M"),
-            spel=ev["outcome"].map(OUT_NAME))[
+            spel=ev["outcome"].map(lambda o: OUT_NAME.get(o, o)))[
             ["bet_id", "avspark", "match", "spel", "book", "odds", "stake", "status", "profit", "clv", "note"]]
         edited = st.data_editor(
             show, hide_index=True, width="stretch",

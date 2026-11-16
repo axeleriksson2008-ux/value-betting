@@ -25,7 +25,10 @@ def test_add_and_ids():
                        outcome="h", book="b", odds=1.0, stake=5)
     with pytest.raises(ValueError):
         betlog.add_bet(b, event_id="x", sport="s", match="m", commence_time="2026-01-01",
-                       outcome="1", book="b", odds=2.0, stake=5)
+                       outcome="", book="b", odds=2.0, stake=5)
+    b = betlog.add_bet(b, event_id="x", sport="E0", match="m", commence_time="2026-01-01T15:00Z",
+                       outcome="Hörnor totalt över 9.5", book="bet365", odds=1.9, stake=5)
+    assert betlog.evaluate(b)["clv"].isna().all()  # no closing odds for statistics bets
 
 
 def test_profit_roi_and_clv():

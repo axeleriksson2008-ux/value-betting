@@ -1,7 +1,8 @@
 """Bet log: the bets you actually placed, stored in data/bets.csv.
 
 Columns
-  bet_id, placed_at, event_id, sport, match, commence_time, outcome (h/d/a),
+  bet_id, placed_at, event_id, sport, match, commence_time,
+  outcome (h/d/a for 1X2, otherwise a text such as "Hörnor totalt över 9.5"),
   book, odds, stake, fair_odds (Pinnacle fair price when you bet), status, note
 status: open / won / lost / void (void = stake returned)
 
@@ -50,8 +51,8 @@ def add_bet(bets: pd.DataFrame, *, event_id, sport, match, commence_time, outcom
             placed_at=None) -> pd.DataFrame:
     if odds <= 1 or stake <= 0:
         raise ValueError("odds must be > 1 and stake > 0")
-    if outcome not in ("h", "d", "a"):
-        raise ValueError("outcome must be h, d or a")
+    if not outcome or not isinstance(outcome, str):
+        raise ValueError("outcome must be h, d, a or a description such as 'corners total over 9.5'")
     new_id = int(bets["bet_id"].max()) + 1 if len(bets) else 1
     row = {"bet_id": new_id, "placed_at": pd.Timestamp(placed_at or pd.Timestamp.now(tz="UTC")),
            "event_id": str(event_id), "sport": sport, "match": match,
