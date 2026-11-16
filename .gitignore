@@ -1,0 +1,11 @@
+# Secrets
+.env
+
+# Raw downloads (re-downloadable, not in git)
+data/raw/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
