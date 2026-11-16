@@ -4,10 +4,12 @@ from src.loaders import load_all, read_extra_league, read_main_league
 
 MAIN_CSV = (
     "Div,Date,Time,HomeTeam,AwayTeam,FTHG,FTAG,FTR,B365H,B365D,B365A,PSH,PSD,PSA,"
-    "MaxH,MaxD,MaxA,AvgH,AvgD,AvgA,P>2.5,P<2.5,PSCH,PSCD,PSCA,MaxCH,MaxCD,MaxCA,PC>2.5,PC<2.5\n"
+    "MaxH,MaxD,MaxA,AvgH,AvgD,AvgA,P>2.5,P<2.5,PSCH,PSCD,PSCA,MaxCH,MaxCD,MaxCA,PC>2.5,PC<2.5,"
+    "AHh,PAHH,PAHA,AHCh,PCAHH,PCAHA,BWCH\n"
     "E0,16/08/2024,20:00,Man United,Fulham,1,0,H,1.6,4.2,5.25,1.62,4.3,5.5,"
-    "1.66,4.4,5.6,1.6,4.2,5.3,1.9,1.95,1.65,4.1,5.4,1.7,4.3,5.6,1.92,1.96\n"
-    ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,\n"  # trailing empty row, should be dropped
+    "1.66,4.4,5.6,1.6,4.2,5.3,1.9,1.95,1.65,4.1,5.4,1.7,4.3,5.6,1.92,1.96,"
+    "-0.75,1.95,1.93,-1,2.02,1.88,1.62\n"
+    ",,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,\n"  # trailing empty row, should be dropped
 )
 
 EXTRA_CSV = (
@@ -34,6 +36,9 @@ def test_main_league_normalised(tmp_path):
     assert row["ps_close_u25"] == 1.96
     assert row["b365_early_h"] == 1.6
     assert math.isnan(row["b365_close_h"])  # column missing in source
+    assert row["ah_line_early"] == -0.75 and row["ah_line_close"] == -1
+    assert row["ps_early_ahh"] == 1.95 and row["ps_close_aha"] == 1.88
+    assert row["bw_close_h"] == 1.62
 
 
 def test_extra_league_normalised(tmp_path):
@@ -46,6 +51,13 @@ def test_extra_league_normalised(tmp_path):
     assert row["ps_close_h"] == 1.71
     assert row["avg_close_a"] == 5.0
     assert math.isnan(row["ps_early_h"])  # extra leagues have no early odds
+
+
+def test_cp1252_file(tmp_path):
+    p = tmp_path / "EC_2021.csv"
+    p.write_bytes(MAIN_CSV.replace("Fulham", "Fulham\u2019s").encode("cp1252"))
+    df = read_main_league(p, "EC", 2020)
+    assert df.iloc[0]["away"] == "Fulham\u2019s"
 
 
 def test_load_all_same_columns(tmp_path):
