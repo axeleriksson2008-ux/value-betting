@@ -13,3 +13,4 @@ data/processed/
 value-betting.zip
 data/odds.sqlite
 data/demo/
+.streamlit/secrets.toml

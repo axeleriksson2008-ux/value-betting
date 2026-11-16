@@ -1,9 +1,12 @@
 """Streamlit app: value bets, bet log and statistics.
 
 Start:  streamlit run src/app.py
-Demo:   python -m src.demo   then choose "Demo" in the sidebar.
+Demo:   choose "Demo" in the sidebar (fake data is generated automatically).
+Password (optional): set APP_PASSWORD in .streamlit/secrets.toml or in the
+Streamlit Cloud app settings -> Secrets. Without it the app is open.
 """
 
+import hmac
 import sys
 from pathlib import Path
 
@@ -15,7 +18,7 @@ import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
 from src import betlog, config, live, oddsdb  # noqa: E402
-from src.demo import DEMO_DIR  # noqa: E402
+from src.demo import DEMO_DIR, generate  # noqa: E402
 
 OUT_NAME = {"h": "1", "d": "X", "a": "2"}
 LEAGUE_NAME = {
@@ -27,6 +30,27 @@ LEAGUE_NAME = {
 }
 
 st.set_page_config(page_title="Value-betting", page_icon="⚽", layout="wide")
+
+
+def require_password() -> None:
+    """Stop the app until the right password is given (only if APP_PASSWORD is set)."""
+    try:
+        password = st.secrets.get("APP_PASSWORD")
+    except Exception:  # no secrets file at all
+        password = None
+    if not password or st.session_state.get("authenticated"):
+        return
+    st.title("⚽ Value-betting")
+    entered = st.text_input("Lösenord", type="password")
+    if entered and hmac.compare_digest(entered, str(password)):
+        st.session_state["authenticated"] = True
+        st.rerun()
+    elif entered:
+        st.error("Fel lösenord.")
+    st.stop()
+
+
+require_password()
 
 
 # ---------------------------------------------------------------- data
@@ -53,11 +77,13 @@ def load_prices(snapshots: str, db: str, api_log: str, _fp: tuple) -> pd.DataFra
 # ---------------------------------------------------------------- sidebar
 
 st.sidebar.title("⚽ Value-betting")
-source = st.sidebar.radio("Data", ["Riktig", "Demo"], horizontal=True,
+has_real = _fingerprint(config.SNAPSHOT_DIR)[0] > 0
+source = st.sidebar.radio("Data", ["Riktig", "Demo"], horizontal=True, index=0 if has_real else 1,
                           help="Demo = påhittade lag och odds, bara för att prova sidan.")
 P = paths(source)
 if source == "Demo" and not P["snapshots"].exists():
-    st.sidebar.warning("Ingen demodata. Kör `python -m src.demo` först.")
+    with st.spinner("Skapar demodata …"):
+        generate()
 bankroll = st.sidebar.number_input("Startkassa (kr)", min_value=100, value=1000, step=100)
 threshold = st.sidebar.slider("Minsta value", 0.0, 0.10, config.VALUE_THRESHOLD, 0.01, format="%.2f")
 st.sidebar.caption(f"Insats = kvarts-Kelly, högst {config.MAX_STAKE_SHARE:.0%} av kassan.")
@@ -128,6 +154,23 @@ with tab_value:
 
 with tab_log:
     st.subheader("Spellogg")
+    c1, c2 = st.columns(2)
+    c1.download_button("⬇️ Ladda ner spelloggen (CSV)", bets.to_csv(index=False).encode("utf-8"),
+                       file_name="bets.csv", mime="text/csv", disabled=bets.empty,
+                       help="Spara en kopia ofta – på Streamlit Cloud kan filer försvinna när appen startas om.")
+    up = c2.file_uploader("⬆️ Läs in en sparad spellogg", type="csv", label_visibility="collapsed")
+    if up is not None and st.session_state.get("uploaded") != up.file_id:
+        try:
+            tmp = P["bets"].with_suffix(".upload.csv")
+            tmp.write_bytes(up.getvalue())
+            restored = betlog.load_bets(tmp)
+            tmp.unlink()
+            betlog.save_bets(restored, P["bets"])
+            st.session_state["uploaded"] = up.file_id
+            st.success(f"Läste in {len(restored)} spel.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Kunde inte läsa filen: {e}")
     if bets.empty:
         st.info("Inga spel registrerade än. Lägg till från fliken Value-spel.")
     else:
