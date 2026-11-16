@@ -2,6 +2,26 @@
 
 Fas 1: Poisson-modell och rullande backtest, resultat i `reports/backtest.md`.
 Fas 2: modell v2, 38 ligor, alla bolag och marknader, resultat i `reports/phase2.md`.
+Fas 3: live-odds (The Odds API) hämtas varje timme av GitHub Actions, rapporter i `reports/live_value.md` och `reports/live_clv.md`.
+Fas 4: webbsida (Streamlit) med value-spel, spellogg och statistik.
+
+## Webbsidan
+
+```bash
+pip install -r requirements.txt
+streamlit run src/app.py        # öppna http://localhost:8501
+python -m src.demo              # (valfritt) påhittad demodata, välj "Demo" i sidomenyn
+```
+
+Spelloggen sparas i `data/bets.csv`. Kör `git pull` först för att få de senaste oddsen från GitHub Actions.
+
+## Live-odds (fas 3)
+
+1. Skaffa en gratis nyckel på the-odds-api.com.
+2. Lägg den som GitHub-secret `ODDS_API_KEY` (Settings → Secrets and variables → Actions).
+   Lokalt: skriv `ODDS_API_KEY=...` i `.env` (som aldrig committas).
+3. Inställningar (ligor, bolag, budget) finns i `src/config.py`.
+4. Lagnamn mappas i `config/team_names.csv` (`python -m src.team_names`), rätta rader med status auto/missing för hand.
 
 ## Kör
 
@@ -37,5 +57,11 @@ CSV-filerna hämtas från football-data.co.uk till `data/raw/`
 - `src/walkforward.py` – rullande prediktion för v2, perioder för validering/test
 - `src/tune.py`, `src/search.py`, `src/strategies.py` – parameterval och strategisökning
 - `src/report_phase2.py` – bygger `reports/phase2.md`
+- `src/config.py` – ligor, bolag, credit-budget, insatsregler
+- `src/odds_api.py`, `src/collect.py` – API-klient och timvis hämtning
+- `src/oddsdb.py` – SQLite-databas byggd från sparade odds
+- `src/live.py` – value-lista och CLV-uppföljning
+- `src/team_names.py` – lagnamnsmappning
+- `src/betlog.py`, `src/app.py`, `src/demo.py` – spellogg, webbsida, demodata
 
 Verktyget är för analys. Satsa bara små andelar av en kassa du har råd att förlora.
