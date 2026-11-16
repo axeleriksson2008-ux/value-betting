@@ -1,0 +1,5 @@
+# Minimal packages for the hourly collector (GitHub Actions)
+pandas
+numpy
+scipy
+requests

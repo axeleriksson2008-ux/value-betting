@@ -11,3 +11,4 @@ __pycache__/
 .venv/
 data/processed/
 value-betting.zip
+data/odds.sqlite
